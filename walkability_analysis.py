@@ -1,13 +1,4 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-北京宋家庄地铁站步行可达性分析
-课程作业 - GIS空间可视化
-
-作者: [您的姓名]
-日期: 2026年4月28日
-"""
-
+#北京宋家庄地铁站步行可达性分析
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -142,31 +133,35 @@ def calculate_area(isochrones_gdf: gpd.GeoDataFrame):
 def analyze_blind_zone(subway_coords: tuple, radius: int, isochrones_gdf: gpd.GeoDataFrame):
     """
     计算服务盲区
-    
+
     Args:
         subway_coords: 地铁站坐标 (纬度, 经度)
         radius: 研究区域半径（米）
         isochrones_gdf: WGS84坐标系的等时圈GeoDataFrame
-    
+
     Returns:
-        study_area: 研究区域多边形
-        blind_zones: 服务盲区多边形
+        study_area: 研究区域多边形 (WGS84坐标系)
+        blind_zones: 服务盲区多边形 (WGS84坐标系)
         total_area_m2: 研究区域总面积（平方米）
     """
-    print("4. 识别服务盲区...")
-    
     # 创建研究区域边界 (WGS84坐标系)
     study_area = Point(subway_coords[1], subway_coords[0]).buffer(radius / 111320)
-    
-    # 将研究区域转换为UTM坐标系计算面积
     study_area_gdf = gpd.GeoDataFrame([{'geometry': study_area}], crs=WGS84_CRS)
+
+    # 转换研究区域和15分钟等时圈到UTM坐标系
     study_area_utm = study_area_gdf.to_crs(UTM_CRS)
-    total_area_m2 = study_area_utm.geometry.area.iloc[0]
-    
-    # 15分钟等时圈外的区域为服务盲区
     service_area_15min = isochrones_gdf[isochrones_gdf['time'] == 15]['geometry'].iloc[0]
-    blind_zones = study_area.difference(service_area_15min)
-    
+    service_area_utm = gpd.GeoDataFrame([{'geometry': service_area_15min}], crs=WGS84_CRS).to_crs(UTM_CRS)
+
+    # 计算服务盲区
+    blind_zones_utm = study_area_utm.geometry.iloc[0].difference(service_area_utm.geometry.iloc[0])
+
+    # 计算研究区域总面积
+    total_area_m2 = study_area_utm.geometry.area.iloc[0]
+
+    # 将服务盲区转换回WGS84坐标系
+    blind_zones = gpd.GeoSeries([blind_zones_utm], crs=UTM_CRS).to_crs(WGS84_CRS).iloc[0]
+
     return study_area, blind_zones, total_area_m2
 
 
@@ -260,7 +255,7 @@ def plot_blind_zone_map(G: nx.Graph, subway_coords: tuple,
                         blind_zones: Any, output_dir: str):
     """
     绘制服务盲区分析图
-    
+
     Args:
         G: OSMNx路网图
         subway_coords: 地铁站坐标
@@ -269,10 +264,10 @@ def plot_blind_zone_map(G: nx.Graph, subway_coords: tuple,
         output_dir: 输出目录
     """
     fig, ax = plt.subplots(1, 1, figsize=(12, 10))
-    
+
     # 绘制路网背景
     ox.plot_graph(G, ax=ax, node_size=0, edge_color='lightgray', edge_linewidth=0.3, show=False)
-    
+
     # 绘制15分钟等时圈
     service_area = isochrones_gdf[isochrones_gdf['time'] == 15]
     if len(service_area) > 0:
@@ -281,7 +276,7 @@ def plot_blind_zone_map(G: nx.Graph, subway_coords: tuple,
             x, y = service_geom.exterior.xy
             ax.fill(x, y, alpha=0.3, color='green', label='15分钟服务范围内')
             ax.plot(x, y, color='green', linewidth=2)
-    
+
     # 绘制服务盲区
     if not blind_zones.is_empty:
         if blind_zones.geom_type == 'Polygon':
@@ -291,27 +286,27 @@ def plot_blind_zone_map(G: nx.Graph, subway_coords: tuple,
             for geom in blind_zones.geoms:
                 x, y = geom.exterior.xy
                 ax.fill(x, y, alpha=0.5, color='red', label='服务盲区')
-    
+
     # 绘制地铁站
     ax.plot(subway_coords[1], subway_coords[0], 'ro', markersize=12, 
             label='宋家庄地铁站', zorder=5)
-    
+
     # 设置图形属性
     ax.set_title('北京宋家庄地铁站服务盲区分析', fontsize=16, fontweight='bold')
     ax.set_xlabel('经度')
     ax.set_ylabel('纬度')
-    
+
     # 处理图例重复问题
     handles, labels_legend = ax.get_legend_handles_labels()
     by_label = dict(zip(labels_legend, handles))
     ax.legend(by_label.values(), by_label.keys())
-    
+
     ax.grid(True, alpha=0.3)
-    
+
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, 'blind_zone_map.png'), dpi=300, bbox_inches='tight')
     plt.close()
-    
+
     print("已保存: blind_zone_map.png")
 
 
@@ -358,6 +353,20 @@ def print_statistics(isochrones_utm: gpd.GeoDataFrame, total_area_m2: float):
     print(f"服务盲区面积: {blind_area_m2:.2f} 平方米")
     print(f"服务覆盖率: {service_area_15min_m2/total_area_m2*100:.1f}%")
 
+
+# def plot_shortest_path(G, orig_node, nodes_gdf, output_dir):
+#     target_node = nodes_gdf['distance_to_station'].idxmax()
+
+#     route = nx.shortest_path(G, orig_node, target_node, weight='length')
+
+#     fig, ax = ox.plot_graph_route(
+#         G, route, route_linewidth=4, node_size=0, show=False
+#     )
+
+#     plt.savefig(os.path.join(output_dir, 'shortest_path.png'), dpi=300)
+#     plt.close()
+
+#     print("已保存: shortest_path.png")
 
 def main():
     """主函数"""
