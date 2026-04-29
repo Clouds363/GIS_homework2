@@ -120,8 +120,13 @@ isochrones_gdf['area'] = isochrones_gdf.geometry.area
 
 print("4. 识别服务盲区...")
 
-# 创建研究区域边界
+# 创建研究区域边界 (WGS84坐标系)
 study_area = Point(subway_coords[1], subway_coords[0]).buffer(radius / 111320)  # 转换为度
+
+# 将研究区域转换为UTM坐标系以计算准确面积
+study_area_gdf = gpd.GeoDataFrame([{'geometry': study_area}], crs='EPSG:4326')
+study_area_utm = study_area_gdf.to_crs('EPSG:32650')
+total_area_m2 = study_area_utm.geometry.area.iloc[0]
 
 # 15分钟等时圈外的区域为服务盲区 (使用WGS84版本)
 service_area_15min = isochrones_gdf_wgs84[isochrones_gdf_wgs84['time'] == 15]['geometry'].iloc[0]
@@ -251,10 +256,14 @@ print("6. 生成统计分析...")
 for _, row in isochrones_gdf.iterrows():
     print(f"{row.time}分钟等时圈覆盖面积: {row.area:.2f} 平方米")
 
-# 计算服务盲区面积
-total_area = study_area.area
-service_area = isochrones_gdf[isochrones_gdf['time'] == 15]['area'].iloc[0] if len(isochrones_gdf[isochrones_gdf['time'] == 15]) > 0 else 0
-blind_area = total_area - service_area
+# 计算服务盲区面积 (使用UTM坐标系保持单位一致)
+service_area_15min_m2 = isochrones_gdf[isochrones_gdf['time'] == 15]['area'].iloc[0] if len(isochrones_gdf[isochrones_gdf['time'] == 15]) > 0 else 0
+blind_area_m2 = total_area_m2 - service_area_15min_m2
+
+print(f"研究区域总面积: {total_area_m2:.2f} 平方米")
+print(f"15分钟服务范围面积: {service_area_15min_m2:.2f} 平方米")
+print(f"服务盲区面积: {blind_area_m2:.2f} 平方米")
+print(f"服务覆盖率: {service_area_15min_m2/total_area_m2*100:.1f}%")
 
 print(f"\n分析完成！所有文件已保存到: {output_dir}")
 
