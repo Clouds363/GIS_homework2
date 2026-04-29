@@ -249,65 +249,85 @@ def plot_isochrone_map(G: nx.Graph, subway_coords: tuple,
     
     print("已保存: isochrone_map.png")
 
-
 def plot_blind_zone_map(G: nx.Graph, subway_coords: tuple, 
                         isochrones_gdf: gpd.GeoDataFrame, 
                         blind_zones: Any, output_dir: str):
     """
-    绘制服务盲区分析图
-
-    Args:
-        G: OSMNx路网图
-        subway_coords: 地铁站坐标
-        isochrones_gdf: WGS84坐标系的等时圈GeoDataFrame
-        blind_zones: 服务盲区多边形
-        output_dir: 输出目录
+    完全无重叠版服务盲区图（推荐最终提交用）
     """
     fig, ax = plt.subplots(1, 1, figsize=(12, 10))
 
-    # 绘制路网背景
-    ox.plot_graph(G, ax=ax, node_size=0, edge_color='lightgray', edge_linewidth=0.3, show=False)
+    # 1. 路网背景
+    ox.plot_graph(G, ax=ax, node_size=0, edge_color='#e0e0e0',
+                  edge_linewidth=0.5, show=False, close=False)
 
-    # 绘制15分钟等时圈
+    # 2. 获取15分钟服务区
     service_area = isochrones_gdf[isochrones_gdf['time'] == 15]
+
+    service_geom = None
     if len(service_area) > 0:
         service_geom = service_area.geometry.iloc[0]
+
+    # 3. 👉 关键：从盲区中减去服务区（彻底消除重叠）
+    clean_blind = blind_zones
+    if service_geom is not None:
+        try:
+            clean_blind = blind_zones.difference(service_geom)
+        except:
+            pass  # 防止拓扑错误崩溃
+
+    # 4. 画盲区（真正不重叠的）
+    if not clean_blind.is_empty:
+        if clean_blind.geom_type == 'Polygon':
+            x, y = clean_blind.exterior.xy
+            ax.fill(x, y, color='#ff4d4d', alpha=0.5,
+                    label='服务盲区 (>15min)', zorder=1)
+            ax.fill(x, y, color='none', edgecolor='#c0392b',
+                    hatch='///', alpha=0.4, zorder=1)
+
+        elif clean_blind.geom_type == 'MultiPolygon':
+            for i, geom in enumerate(clean_blind.geoms):
+                x, y = geom.exterior.xy
+                label = '服务盲区 (>15min)' if i == 0 else ""
+                ax.fill(x, y, color='#ff4d4d', alpha=0.5,
+                        label=label, zorder=1)
+                ax.fill(x, y, color='none', edgecolor='#c0392b',
+                        hatch='///', alpha=0.4, zorder=1)
+
+    # 5. 画服务区（完全独立）
+    if service_geom is not None:
         if hasattr(service_geom, 'exterior'):
             x, y = service_geom.exterior.xy
-            ax.fill(x, y, alpha=0.3, color='green', label='15分钟服务范围内')
-            ax.plot(x, y, color='green', linewidth=2)
+            ax.fill(x, y, color='#2ecc71', alpha=0.8,
+                    label='15分钟服务范围', zorder=2)
+            ax.plot(x, y, color='#27ae60',
+                    linewidth=2.5, zorder=3)
 
-    # 绘制服务盲区
-    if not blind_zones.is_empty:
-        if blind_zones.geom_type == 'Polygon':
-            x, y = blind_zones.exterior.xy
-            ax.fill(x, y, alpha=0.5, color='red', label='服务盲区')
-        elif blind_zones.geom_type == 'MultiPolygon':
-            for geom in blind_zones.geoms:
-                x, y = geom.exterior.xy
-                ax.fill(x, y, alpha=0.5, color='red', label='服务盲区')
+    # 6. 地铁站
+    ax.scatter(subway_coords[1], subway_coords[0],
+               color='yellow', edgecolor='black',
+               s=250, marker='*',
+               label='宋家庄地铁站', zorder=5)
 
-    # 绘制地铁站
-    ax.plot(subway_coords[1], subway_coords[0], 'ro', markersize=12, 
-            label='宋家庄地铁站', zorder=5)
-
-    # 设置图形属性
-    ax.set_title('北京宋家庄地铁站服务盲区分析', fontsize=16, fontweight='bold')
+    # 7. 图形优化
+    ax.set_title('北京宋家庄地铁站服务盲区分析',
+                 fontsize=18, fontweight='bold')
     ax.set_xlabel('经度')
     ax.set_ylabel('纬度')
 
-    # 处理图例重复问题
-    handles, labels_legend = ax.get_legend_handles_labels()
-    by_label = dict(zip(labels_legend, handles))
-    ax.legend(by_label.values(), by_label.keys())
+    handles, labels = ax.get_legend_handles_labels()
+    by_label = dict(zip(labels, handles))
+    ax.legend(by_label.values(), by_label.keys(),
+              loc='upper right', fontsize=11)
 
-    ax.grid(True, alpha=0.3)
+    ax.grid(True, linestyle='--', alpha=0.5)
 
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, 'blind_zone_map.png'), dpi=300, bbox_inches='tight')
-    plt.close()
+    plt.savefig(os.path.join(output_dir, 'blind_zone_map_final.png'),
+                dpi=300, bbox_inches='tight')
+    plt.show()
 
-    print("已保存: blind_zone_map.png")
+    print("已保存: blind_zone_map_final.png")
 
 
 def plot_maps(G, subway_coords, isochrones_gdf, study_area, blind_zones, output_dir: str):
@@ -353,20 +373,6 @@ def print_statistics(isochrones_utm: gpd.GeoDataFrame, total_area_m2: float):
     print(f"服务盲区面积: {blind_area_m2:.2f} 平方米")
     print(f"服务覆盖率: {service_area_15min_m2/total_area_m2*100:.1f}%")
 
-
-# def plot_shortest_path(G, orig_node, nodes_gdf, output_dir):
-#     target_node = nodes_gdf['distance_to_station'].idxmax()
-
-#     route = nx.shortest_path(G, orig_node, target_node, weight='length')
-
-#     fig, ax = ox.plot_graph_route(
-#         G, route, route_linewidth=4, node_size=0, show=False
-#     )
-
-#     plt.savefig(os.path.join(output_dir, 'shortest_path.png'), dpi=300)
-#     plt.close()
-
-#     print("已保存: shortest_path.png")
 
 def main():
     """主函数"""
