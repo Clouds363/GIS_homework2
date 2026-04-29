@@ -56,7 +56,7 @@ print(f"网络边数: {len(G.edges())}")
 
 print("2. 进行网络分析...")
 
-# 找到最近的网络节点
+# 找到最近的网络节点 (注意: 参数顺序是 经度, 纬度)
 orig_node = ox.distance.nearest_nodes(G, subway_coords[1], subway_coords[0])
 
 # 设置步行速度 (1.2 m/s)
@@ -94,15 +94,25 @@ for time in isochrone_times:
 
     if len(reachable_nodes) > 2:
         # 创建凸包
-        hull = reachable_nodes.unary_union.convex_hull
+        from shapely.ops import unary_union
+        hull = unary_union(reachable_nodes.geometry).convex_hull
         isochrones.append({
             'time': time,
             'geometry': hull,
-            'area': hull.area if hasattr(hull, 'area') else 0
+            'area': 0  # 面积将在投影转换后计算
         })
 
 # 转换为GeoDataFrame
 isochrones_gdf = gpd.GeoDataFrame(isochrones, crs='EPSG:4326')
+
+# 保存原始地理坐标系版本用于可视化
+isochrones_gdf_wgs84 = isochrones_gdf.copy()
+
+# 转换为投影坐标系以计算准确面积 (UTM Zone 50N，适用于北京)
+isochrones_gdf = isochrones_gdf.to_crs('EPSG:32650')
+
+# 计算各等时圈的实际面积（平方米）
+isochrones_gdf['area'] = isochrones_gdf.geometry.area
 
 # ==============================================================================
 # 4. 识别服务盲区
@@ -113,8 +123,8 @@ print("4. 识别服务盲区...")
 # 创建研究区域边界
 study_area = Point(subway_coords[1], subway_coords[0]).buffer(radius / 111320)  # 转换为度
 
-# 15分钟等时圈外的区域为服务盲区
-service_area_15min = isochrones_gdf[isochrones_gdf['time'] == 15]['geometry'].iloc[0]
+# 15分钟等时圈外的区域为服务盲区 (使用WGS84版本)
+service_area_15min = isochrones_gdf_wgs84[isochrones_gdf_wgs84['time'] == 15]['geometry'].iloc[0]
 blind_zones = study_area.difference(service_area_15min)
 
 # ==============================================================================
@@ -159,11 +169,11 @@ fig, ax = plt.subplots(1, 1, figsize=(12, 10))
 # 绘制路网背景
 ox.plot_graph(G, ax=ax, node_size=0, edge_color='lightgray', edge_linewidth=0.3, show=False)
 
-# 绘制等时圈
+# 绘制等时圈 (使用WGS84坐标系用于可视化)
 colors = ['#2E8B57', '#32CD32', '#FFD700', '#FF6347']
 labels = ['5分钟', '10分钟', '15分钟', '20分钟']
 
-for i, (_, row) in enumerate(isochrones_gdf.iterrows()):
+for i, (_, row) in enumerate(isochrones_gdf_wgs84.iterrows()):
     if hasattr(row.geometry, 'exterior'):
         x, y = row.geometry.exterior.xy
         ax.fill(x, y, alpha=0.3, color=colors[i], label=f'{row.time}分钟等时圈')
@@ -191,8 +201,8 @@ fig, ax = plt.subplots(1, 1, figsize=(12, 10))
 # 绘制路网背景
 ox.plot_graph(G, ax=ax, node_size=0, edge_color='lightgray', edge_linewidth=0.3, show=False)
 
-# 绘制15分钟等时圈
-service_area = isochrones_gdf[isochrones_gdf['time'] == 15]
+# 绘制15分钟等时圈 (使用WGS84坐标系)
+service_area = isochrones_gdf_wgs84[isochrones_gdf_wgs84['time'] == 15]
 if len(service_area) > 0:
     service_geom = service_area.geometry.iloc[0]
     if hasattr(service_geom, 'exterior'):
